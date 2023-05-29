@@ -1,0 +1,151 @@
+﻿@page "/"
+
+<title>WebClient</title>
+
+<section class="chat">
+
+</section>
+
+<div style="width:600px;">
+    <div style="float:left">
+        <div style="margin:10px">
+            <span>
+                State:
+            </span>
+            <span style="color:@StateSpanColor">
+                @ClientState
+            </span>
+            <button @onclick="OnConnectButtonClick">@ConnectButtonText</button>
+        </div>
+
+        <div style="margin:10px">
+            <span>Name:</span>
+            <input type="text" @bind-value="@UserName"/>
+        </div>
+        <div style="margin:10px">
+            <button 
+                style="margin:0 109px 0 55px" 
+                @onclick="GetUserNameButtonClick">
+                Get
+            </button>
+            <button @onclick="SetUserNameButtonClick">Set</button>
+        </div>
+
+        <div>
+            <span>Message:</span>
+            <textarea @bind="@UserMessage"></textarea>
+        </div>
+        <button style="margin:0 0 0 200px" @onclick="@OnSendButtonClick">Send</button>
+    </div>
+
+    <div style="float:right">
+        @foreach (var item in ChatHistory)
+        {
+            <div style="color:@item.TextColor">
+                @item.Data
+            </div>
+        }
+    </div>
+</div>
+
+
+@code
+{
+    private string ClientState = "Disconnected";
+    private string StateSpanColor = "red";
+    private string ConnectButtonText = "Connect";
+
+
+    private HubConnection Connection = null!;
+    private List<Models.ListItem> ChatHistory = null!;
+
+    private string UserMessage = string.Empty;
+    private string UserName = string.Empty;
+
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+
+        Connection = new HubConnectionBuilder()
+            .WithUrl("https://localhost:7253/notification")
+            .WithAutomaticReconnect()
+            .Build();
+
+        ChatHistory = new();
+
+        Connection.On<Models.Message>("SendMessageToOtherClients", message =>
+        {
+            WriteToInputChat(message.Header, message.Body, "black");
+        });
+
+        Connection.Reconnected += connectionId =>
+        {
+            Console.WriteLine($"reconnected with id {connectionId}");
+            return Task.CompletedTask;
+        };
+
+        Connection.Closed += exception =>
+        {
+            Console.WriteLine($"Connection closed with {(exception == null ? "no error" : exception.Message)}");
+            return Task.CompletedTask;
+        };
+
+        Connection.Reconnecting += exception =>
+        {
+            Console.WriteLine($"reconnecting with {(exception == null ? "no error" : exception.Message)}");
+            return Task.CompletedTask;
+        };
+    }
+
+    private void WriteToInputChat(string UserName, string Data, string TextColor)
+    {
+        string resultString = $"{UserName}:\n{Data}\n\n";
+        ChatHistory.Add(new(resultString, TextColor));
+        StateHasChanged();
+    }
+
+    private async Task OnSendButtonClick()
+    {
+        var userName = await GetUserNameAsync();
+        var message = new Models.Message(userName, UserMessage);
+
+        WriteToInputChat("Me", UserMessage, "green");
+
+        await Connection.SendAsync("SendToOhters", message);
+    }
+
+    private async Task OnConnectButtonClick()
+    {
+        if (Connection.State == HubConnectionState.Disconnected)
+        {
+            await Connection.StartAsync();
+        }
+        if (Connection.State == HubConnectionState.Connected)
+        {
+            ConnectButtonText = "Disconnect";
+            ClientState = "Connected";
+            StateSpanColor = "green";
+        }
+    }
+
+    private Task<string> GetUserNameAsync() =>
+         Connection.InvokeAsync<string>("GetName");
+
+    private async Task GetUserNameButtonClick()
+    {
+        UserName = await GetUserNameAsync();
+    }
+
+    private async Task SetUserNameButtonClick()
+    {
+        if (string.IsNullOrEmpty(UserName))
+        {
+            await Task.CompletedTask;
+        }
+        else
+        {
+            await Connection.SendAsync("SetName", UserName);
+        }
+    }
+}
